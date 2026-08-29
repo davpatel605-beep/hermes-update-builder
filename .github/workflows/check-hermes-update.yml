@@ -41,7 +41,6 @@ jobs:
             echo "FIRST_RUN=true" >> "$GITHUB_OUTPUT"
             echo "UPDATE_FOUND=false" >> "$GITHUB_OUTPUT"
             echo "First run. Baseline saved."
-
           else
             OLD_COMMIT=$(cat config/repo2-commit.txt)
 
@@ -51,7 +50,6 @@ jobs:
             if [ "$OLD_COMMIT" = "$LATEST_COMMIT" ]; then
               echo "UPDATE_FOUND=false" >> "$GITHUB_OUTPUT"
               echo "No new update found."
-
             else
               echo "$LATEST_COMMIT" > config/repo2-commit.txt
               echo "UPDATE_FOUND=true" >> "$GITHUB_OUTPUT"
@@ -111,16 +109,73 @@ jobs:
         if: steps.check.outputs.UPDATE_FOUND == 'true'
         uses: android-actions/setup-android@v4
 
-      - name: Install Android SDK components
+      - name: Detect available Android SDK platforms
         if: steps.check.outputs.UPDATE_FOUND == 'true'
+        id: sdk
         run: |
-          echo "Installing required Android SDK components..."
+          echo "Checking available Android SDK platforms..."
 
-          sdkmanager "platforms;android-37" "build-tools;36.0.0"
+          sdkmanager --list > sdkmanager-list.txt
+
+          AVAILABLE_PLATFORM=$(
+            grep -E '^[[:space:]]*platforms;android-[0-9]+([[:space:]]|$)' sdkmanager-list.txt \
+            | sed -E 's/^[[:space:]]*(platforms;android-[0-9]+).*/\1/' \
+            | sort -V \
+            | tail -n 1
+          )
+
+          if [ -z "$AVAILABLE_PLATFORM" ]; then
+            echo "ERROR: No Android SDK platform was found."
+            exit 1
+          fi
+
+          API_LEVEL=$(echo "$AVAILABLE_PLATFORM" | sed 's/platforms;android-//')
+
+          echo "Selected Android SDK platform:"
+          echo "$AVAILABLE_PLATFORM"
+
+          echo "API_LEVEL=$API_LEVEL" >> "$GITHUB_OUTPUT"
+
+      - name: Install selected Android SDK platform
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        env:
+          API_LEVEL: ${{ steps.sdk.outputs.API_LEVEL }}
+        run: |
+          echo "Installing Android SDK platform API $API_LEVEL..."
+
+          sdkmanager "platforms;android-$API_LEVEL"
 
           yes | sdkmanager --licenses > /dev/null || true
 
-          echo "Android SDK setup completed."
+          echo "Android SDK platform installed."
+
+      - name: Install Android Build Tools
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        run: |
+          echo "Installing Android Build Tools 36.0.0..."
+
+          sdkmanager "build-tools;36.0.0"
+
+          yes | sdkmanager --licenses > /dev/null || true
+
+          echo "Build Tools installed."
+
+      - name: Configure project SDK level
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        env:
+          API_LEVEL: ${{ steps.sdk.outputs.API_LEVEL }}
+        run: |
+          echo "Configuring Android project for API $API_LEVEL..."
+
+          sed -i "s/compileSdk = [0-9]*/compileSdk = $API_LEVEL/" \
+            downloaded-hermes/app/build.gradle.kts
+
+          sed -i "s/targetSdk = [0-9]*/targetSdk = $API_LEVEL/" \
+            downloaded-hermes/app/build.gradle.kts
+
+          echo "Final Android configuration:"
+          grep -E "compileSdk|targetSdk|minSdk" \
+            downloaded-hermes/app/build.gradle.kts
 
       - name: Setup Gradle 9.5.0
         if: steps.check.outputs.UPDATE_FOUND == 'true'
@@ -180,6 +235,7 @@ jobs:
           echo "NEW HERMES UPDATE DETECTED"
           echo "Repo 2 source downloaded"
           echo "Android project verified"
+          echo "Android SDK configured"
           echo "APK BUILD SUCCESSFUL"
           echo "APK uploaded as GitHub Artifact"
           echo "=================================="
