@@ -1,0 +1,80 @@
+name: Check Hermes Update
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Update Builder
+        uses: actions/checkout@v4
+
+      - name: Check Repo 2 latest commit
+        id: check
+        env:
+          REPO2: https://github.com/davpatel605-deep/hermes-android-test-source.git
+        run: |
+          echo "Checking Repo 2..."
+
+          LATEST_COMMIT=$(git ls-remote "$REPO2" refs/heads/main | awk '{print $1}')
+
+          echo "Latest Repo 2 commit:"
+          echo "$LATEST_COMMIT"
+
+          mkdir -p config
+
+          if [ ! -f config/repo2-commit.txt ]; then
+            echo "$LATEST_COMMIT" > config/repo2-commit.txt
+            echo "FIRST_RUN=true" >> "$GITHUB_OUTPUT"
+            echo "UPDATE_FOUND=false" >> "$GITHUB_OUTPUT"
+            echo "First run. Baseline saved."
+          else
+            OLD_COMMIT=$(cat config/repo2-commit.txt)
+
+            echo "Previous commit:"
+            echo "$OLD_COMMIT"
+
+            if [ "$OLD_COMMIT" = "$LATEST_COMMIT" ]; then
+              echo "UPDATE_FOUND=false" >> "$GITHUB_OUTPUT"
+              echo "No new update found."
+            else
+              echo "$LATEST_COMMIT" > config/repo2-commit.txt
+              echo "UPDATE_FOUND=true" >> "$GITHUB_OUTPUT"
+              echo "NEW UPDATE FOUND!"
+            fi
+          fi
+
+      - name: Save detected version
+        if: steps.check.outputs.UPDATE_FOUND == 'true' || steps.check.outputs.FIRST_RUN == 'true'
+        run: |
+          git config user.name "Hermes Update Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add config/repo2-commit.txt
+
+          git commit -m "Update tracked Hermes source version" || echo "Nothing to commit"
+
+          git push
+
+      - name: Update detected
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        run: |
+          echo "=================================="
+          echo "NEW HERMES UPDATE DETECTED"
+          echo "Repo 2 has changed."
+          echo "Next stage will download and build it."
+          echo "=================================="
+
+      - name: No update
+        if: steps.check.outputs.UPDATE_FOUND == 'false' && steps.check.outputs.FIRST_RUN != 'true'
+        run: |
+          echo "No new Hermes update."
+          echo "Repo 2 is unchanged."
