@@ -14,9 +14,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Update Builder
-        uses: actions/checkout@v6
 
+      # --------------------------------------------------
+      # 1. Checkout Repo 1
+      # --------------------------------------------------
+      - name: Checkout Update Builder
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------
+      # 2. Check Repo 2 for new commit
+      # --------------------------------------------------
       - name: Check Repo 2 latest commit
         id: check
         env:
@@ -27,7 +35,7 @@ jobs:
           LATEST_COMMIT=$(git ls-remote "$REPO2" refs/heads/main | awk '{print $1}')
 
           if [ -z "$LATEST_COMMIT" ]; then
-            echo "ERROR: Could not read Repo 2."
+            echo "ERROR: Could not find Repo 2."
             exit 1
           fi
 
@@ -37,26 +45,44 @@ jobs:
           mkdir -p config
 
           if [ ! -f config/repo2-commit.txt ]; then
+
             echo "$LATEST_COMMIT" > config/repo2-commit.txt
+
             echo "FIRST_RUN=true" >> "$GITHUB_OUTPUT"
             echo "UPDATE_FOUND=false" >> "$GITHUB_OUTPUT"
-            echo "First run. Baseline saved."
+
+            echo "First run."
+            echo "Baseline version saved."
+
           else
+
             OLD_COMMIT=$(cat config/repo2-commit.txt)
 
             echo "Previous commit:"
             echo "$OLD_COMMIT"
 
             if [ "$OLD_COMMIT" = "$LATEST_COMMIT" ]; then
+
               echo "UPDATE_FOUND=false" >> "$GITHUB_OUTPUT"
+
               echo "No new update found."
+
             else
+
               echo "$LATEST_COMMIT" > config/repo2-commit.txt
+
               echo "UPDATE_FOUND=true" >> "$GITHUB_OUTPUT"
+
               echo "NEW UPDATE FOUND!"
+
             fi
+
           fi
 
+
+      # --------------------------------------------------
+      # 3. Save detected commit
+      # --------------------------------------------------
       - name: Save detected version
         if: steps.check.outputs.UPDATE_FOUND == 'true' || steps.check.outputs.FIRST_RUN == 'true'
         run: |
@@ -69,6 +95,10 @@ jobs:
 
           git push
 
+
+      # --------------------------------------------------
+      # 4. Download latest Repo 2 source
+      # --------------------------------------------------
       - name: Download latest Repo 2 source
         if: steps.check.outputs.UPDATE_FOUND == 'true'
         env:
@@ -82,166 +112,286 @@ jobs:
 
           echo "Repo 2 downloaded successfully."
 
-          find downloaded-hermes -maxdepth 5 -type f \
-            ! -path "*/.git/*" | sort
+          echo "Files received from Repo 2:"
+          find downloaded-hermes -maxdepth 4 -type f | sort | head -200
 
-      - name: Verify downloaded Android project
+
+      # --------------------------------------------------
+      # 5. Verify downloaded source
+      # --------------------------------------------------
+      - name: Verify downloaded source
         if: steps.check.outputs.UPDATE_FOUND == 'true'
         run: |
-          echo "Checking Android project..."
+          echo "Checking downloaded source..."
 
-          test -f downloaded-hermes/settings.gradle.kts
-          test -f downloaded-hermes/build.gradle.kts
-          test -f downloaded-hermes/app/build.gradle.kts
-          test -f downloaded-hermes/app/src/main/AndroidManifest.xml
-          test -f downloaded-hermes/app/src/main/java/com/example/hermestest/MainActivity.java
-
-          echo "Android project verification PASSED."
-
-      - name: Setup JDK 17
-        if: steps.check.outputs.UPDATE_FOUND == 'true'
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Setup Android SDK
-        if: steps.check.outputs.UPDATE_FOUND == 'true'
-        uses: android-actions/setup-android@v4
-
-      - name: Detect available Android SDK platforms
-        if: steps.check.outputs.UPDATE_FOUND == 'true'
-        id: sdk
-        run: |
-          echo "Checking available Android SDK platforms..."
-
-          sdkmanager --list > sdkmanager-list.txt
-
-          AVAILABLE_PLATFORM=$(
-            grep -E '^[[:space:]]*platforms;android-[0-9]+([[:space:]]|$)' sdkmanager-list.txt \
-            | sed -E 's/^[[:space:]]*(platforms;android-[0-9]+).*/\1/' \
-            | sort -V \
-            | tail -n 1
-          )
-
-          if [ -z "$AVAILABLE_PLATFORM" ]; then
-            echo "ERROR: No Android SDK platform was found."
+          if [ ! -d "downloaded-hermes" ]; then
+            echo "ERROR: downloaded-hermes directory missing."
             exit 1
           fi
 
-          API_LEVEL=$(echo "$AVAILABLE_PLATFORM" | sed 's/platforms;android-//')
+          if [ ! -f "downloaded-hermes/README.md" ]; then
+            echo "WARNING: README.md not found."
+          fi
 
-          echo "Selected Android SDK platform:"
-          echo "$AVAILABLE_PLATFORM"
+          if [ ! -d "downloaded-hermes/app" ]; then
+            echo "ERROR: Android app directory not found."
+            exit 1
+          fi
 
-          echo "API_LEVEL=$API_LEVEL" >> "$GITHUB_OUTPUT"
+          if [ ! -f "downloaded-hermes/app/src/main/AndroidManifest.xml" ]; then
+            echo "ERROR: AndroidManifest.xml not found."
+            exit 1
+          fi
 
-      - name: Install selected Android SDK platform
+          echo "Source verification PASSED."
+
+
+      # --------------------------------------------------
+      # 6. Show Android project information
+      # --------------------------------------------------
+      - name: Inspect Android project
         if: steps.check.outputs.UPDATE_FOUND == 'true'
-        env:
-          API_LEVEL: ${{ steps.sdk.outputs.API_LEVEL }}
+        working-directory: downloaded-hermes
         run: |
-          echo "Installing Android SDK platform API $API_LEVEL..."
+          echo "Inspecting Android project..."
 
-          sdkmanager "platforms;android-$API_LEVEL"
+          echo "Root files:"
+          find . -maxdepth 2 -type f | sort | head -200
 
-          yes | sdkmanager --licenses > /dev/null || true
+          echo ""
+          echo "AndroidManifest:"
+          sed -n '1,120p' app/src/main/AndroidManifest.xml || true
 
-          echo "Android SDK platform installed."
+          echo ""
+          echo "Gradle files:"
+          find . -maxdepth 3 \( -name "build.gradle" -o -name "build.gradle.kts" -o -name "settings.gradle" -o -name "settings.gradle.kts" \) -print
 
-      - name: Install Android Build Tools
+
+      # --------------------------------------------------
+      # 7. Setup Java
+      # --------------------------------------------------
+      - name: Setup Java 17
         if: steps.check.outputs.UPDATE_FOUND == 'true'
-        run: |
-          echo "Installing Android Build Tools 36.0.0..."
-
-          sdkmanager "build-tools;36.0.0"
-
-          yes | sdkmanager --licenses > /dev/null || true
-
-          echo "Build Tools installed."
-
-      - name: Configure project SDK level
-        if: steps.check.outputs.UPDATE_FOUND == 'true'
-        env:
-          API_LEVEL: ${{ steps.sdk.outputs.API_LEVEL }}
-        run: |
-          echo "Configuring Android project for API $API_LEVEL..."
-
-          sed -i "s/compileSdk = [0-9]*/compileSdk = $API_LEVEL/" \
-            downloaded-hermes/app/build.gradle.kts
-
-          sed -i "s/targetSdk = [0-9]*/targetSdk = $API_LEVEL/" \
-            downloaded-hermes/app/build.gradle.kts
-
-          echo "Final Android configuration:"
-          grep -E "compileSdk|targetSdk|minSdk" \
-            downloaded-hermes/app/build.gradle.kts
-
-      - name: Setup Gradle 9.5.0
-        if: steps.check.outputs.UPDATE_FOUND == 'true'
-        uses: gradle/actions/setup-gradle@v6
+        uses: actions/setup-java@v4
         with:
-          gradle-version: '9.5.0'
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
 
+
+      # --------------------------------------------------
+      # 8. Setup Android SDK
+      # --------------------------------------------------
+      - name: Setup Android SDK
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        uses: android-actions/setup-android@v3
+
+
+      # --------------------------------------------------
+      # 9. Install common Android SDK components
+      # --------------------------------------------------
+      - name: Install Android SDK components
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        run: |
+          echo "Updating Android SDK package list..."
+
+          yes | sdkmanager --licenses >/dev/null || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+          echo "Android SDK setup completed."
+
+
+      # --------------------------------------------------
+      # 10. Fix missing AppTheme
+      # --------------------------------------------------
+      - name: Fix missing AppTheme for test build
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        working-directory: downloaded-hermes
+        run: |
+          echo "Checking Android AppTheme..."
+
+          MANIFEST="app/src/main/AndroidManifest.xml"
+          VALUES_DIR="app/src/main/res/values"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERROR: AndroidManifest.xml not found."
+            exit 1
+          fi
+
+          if grep -q '@style/AppTheme' "$MANIFEST"; then
+
+            echo "AndroidManifest requires AppTheme."
+
+            mkdir -p "$VALUES_DIR"
+
+            FOUND_THEME=false
+
+            if grep -R 'name="AppTheme"' app/src/main/res/values 2>/dev/null; then
+              FOUND_THEME=true
+            fi
+
+            if [ "$FOUND_THEME" = "true" ]; then
+
+              echo "AppTheme already exists."
+              echo "No change required."
+
+            else
+
+              echo "AppTheme is missing."
+              echo "Creating temporary AppTheme for test build..."
+
+              cat > "$VALUES_DIR/hermes-test-theme.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+</resources>
+EOF
+
+              echo "Temporary AppTheme created."
+
+            fi
+
+          else
+
+            echo "AndroidManifest does not reference AppTheme."
+            echo "No theme repair required."
+
+          fi
+
+
+      # --------------------------------------------------
+      # 11. Find Gradle wrapper
+      # --------------------------------------------------
+      - name: Check Gradle wrapper
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        working-directory: downloaded-hermes
+        run: |
+          echo "Checking Gradle wrapper..."
+
+          if [ ! -f "./gradlew" ]; then
+            echo "ERROR: gradlew was not found."
+            echo "This Android project does not contain a Gradle wrapper."
+            exit 1
+          fi
+
+          chmod +x ./gradlew
+
+          echo "Gradle wrapper found."
+
+          ./gradlew --version
+
+
+      # --------------------------------------------------
+      # 12. Check Java and Gradle versions
+      # --------------------------------------------------
       - name: Check Java and Gradle versions
         if: steps.check.outputs.UPDATE_FOUND == 'true'
+        working-directory: downloaded-hermes
         run: |
           echo "Java version:"
           java -version
 
           echo ""
           echo "Gradle version:"
-          gradle --version
+          ./gradlew --version
 
+
+      # --------------------------------------------------
+      # 13. Build APK
+      # --------------------------------------------------
       - name: Build APK
         if: steps.check.outputs.UPDATE_FOUND == 'true'
         working-directory: downloaded-hermes
         run: |
-          echo "Starting Android APK build..."
+          echo "======================================"
+          echo "BUILDING HERMES APK"
+          echo "======================================"
 
-          gradle assembleDebug --no-daemon
+          chmod +x ./gradlew
 
-          echo "APK build completed."
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
+          echo "======================================"
+          echo "APK BUILD COMPLETED"
+          echo "======================================"
+
+
+      # --------------------------------------------------
+      # 14. Verify APK
+      # --------------------------------------------------
       - name: Verify APK
         if: steps.check.outputs.UPDATE_FOUND == 'true'
+        working-directory: downloaded-hermes
         run: |
-          echo "Searching for APK..."
+          echo "Checking generated APK..."
 
-          APK_PATH=$(find downloaded-hermes/app/build/outputs/apk \
-            -type f \
-            -name "*.apk" | head -n 1)
+          APK_COUNT=$(find . -type f -name "*.apk" | wc -l)
 
-          if [ -z "$APK_PATH" ]; then
-            echo "ERROR: APK was not created."
+          echo "APK files found: $APK_COUNT"
+
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo "ERROR: No APK was generated."
             exit 1
           fi
 
-          echo "APK FOUND:"
-          echo "$APK_PATH"
+          echo ""
+          echo "Generated APK files:"
 
+          find . -type f -name "*.apk" -print
+
+          echo ""
+          echo "APK verification PASSED."
+
+
+      # --------------------------------------------------
+      # 15. Upload APK as GitHub Actions artifact
+      # --------------------------------------------------
       - name: Upload APK
         if: steps.check.outputs.UPDATE_FOUND == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: hermes-test-apk
-          path: downloaded-hermes/app/build/outputs/apk/**/*.apk
+          name: hermes-latest-test-apk
+          path: downloaded-hermes/**/*.apk
           if-no-files-found: error
 
+
+      # --------------------------------------------------
+      # 16. Update detected message
+      # --------------------------------------------------
       - name: Update detected
         if: steps.check.outputs.UPDATE_FOUND == 'true'
         run: |
-          echo "=================================="
+          echo "======================================"
           echo "NEW HERMES UPDATE DETECTED"
-          echo "Repo 2 source downloaded"
-          echo "Android project verified"
-          echo "Android SDK configured"
-          echo "APK BUILD SUCCESSFUL"
-          echo "APK uploaded as GitHub Artifact"
-          echo "=================================="
+          echo "======================================"
 
+          echo "Repo 2 source downloaded."
+          echo "Source verification PASSED."
+          echo "Android build completed."
+          echo "APK verification PASSED."
+          echo "APK uploaded as GitHub Actions artifact."
+
+          echo "======================================"
+
+
+      # --------------------------------------------------
+      # 17. No update message
+      # --------------------------------------------------
       - name: No update
         if: steps.check.outputs.UPDATE_FOUND == 'false' && steps.check.outputs.FIRST_RUN != 'true'
         run: |
-          echo "No new Hermes update."
+          echo "======================================"
+          echo "NO NEW HERMES UPDATE"
+          echo "======================================"
+
           echo "Repo 2 is unchanged."
+
+          echo "======================================"
