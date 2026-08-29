@@ -84,7 +84,7 @@ jobs:
 
           echo "Repo 2 downloaded successfully."
 
-          find downloaded-hermes -maxdepth 4 -type f \
+          find downloaded-hermes -maxdepth 5 -type f \
             ! -path "*/.git/*" | sort
 
       - name: Verify downloaded Android project
@@ -111,11 +111,32 @@ jobs:
         if: steps.check.outputs.UPDATE_FOUND == 'true'
         uses: android-actions/setup-android@v4
 
-      - name: Setup Gradle 9.5
+      - name: Install Android SDK components
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        run: |
+          echo "Installing required Android SDK components..."
+
+          sdkmanager "platforms;android-37" "build-tools;36.0.0"
+
+          yes | sdkmanager --licenses > /dev/null || true
+
+          echo "Android SDK setup completed."
+
+      - name: Setup Gradle 9.5.0
         if: steps.check.outputs.UPDATE_FOUND == 'true'
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: '9.5'
+          gradle-version: '9.5.0'
+
+      - name: Check Java and Gradle versions
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        run: |
+          echo "Java version:"
+          java -version
+
+          echo ""
+          echo "Gradle version:"
+          gradle --version
 
       - name: Build APK
         if: steps.check.outputs.UPDATE_FOUND == 'true'
