@@ -26,6 +26,11 @@ jobs:
 
           LATEST_COMMIT=$(git ls-remote "$REPO2" refs/heads/main | awk '{print $1}')
 
+          if [ -z "$LATEST_COMMIT" ]; then
+            echo "ERROR: Could not read Repo 2."
+            exit 1
+          fi
+
           echo "Latest Repo 2 commit:"
           echo "$LATEST_COMMIT"
 
@@ -36,6 +41,7 @@ jobs:
             echo "FIRST_RUN=true" >> "$GITHUB_OUTPUT"
             echo "UPDATE_FOUND=false" >> "$GITHUB_OUTPUT"
             echo "First run. Baseline saved."
+
           else
             OLD_COMMIT=$(cat config/repo2-commit.txt)
 
@@ -45,6 +51,7 @@ jobs:
             if [ "$OLD_COMMIT" = "$LATEST_COMMIT" ]; then
               echo "UPDATE_FOUND=false" >> "$GITHUB_OUTPUT"
               echo "No new update found."
+
             else
               echo "$LATEST_COMMIT" > config/repo2-commit.txt
               echo "UPDATE_FOUND=true" >> "$GITHUB_OUTPUT"
@@ -64,13 +71,46 @@ jobs:
 
           git push
 
+      - name: Download latest Repo 2 source
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        env:
+          REPO2: https://github.com/davpatel605-beep/hermes-android-test-source.git
+        run: |
+          echo "Downloading latest Repo 2 source..."
+
+          rm -rf downloaded-hermes
+
+          git clone --depth 1 "$REPO2" downloaded-hermes
+
+          echo "Repo 2 downloaded successfully."
+
+          echo "Files received from Repo 2:"
+          find downloaded-hermes -maxdepth 3 -type f | sort
+
+      - name: Verify downloaded source
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        run: |
+          echo "Checking downloaded source..."
+
+          if [ ! -d "downloaded-hermes" ]; then
+            echo "ERROR: Download folder does not exist."
+            exit 1
+          fi
+
+          if [ ! -f "downloaded-hermes/README.md" ]; then
+            echo "ERROR: README.md was not downloaded."
+            exit 1
+          fi
+
+          echo "Source verification PASSED."
+
       - name: Update detected
         if: steps.check.outputs.UPDATE_FOUND == 'true'
         run: |
           echo "=================================="
           echo "NEW HERMES UPDATE DETECTED"
-          echo "Repo 2 has changed."
-          echo "Next stage will download and build it."
+          echo "Repo 2 source downloaded"
+          echo "Source verification PASSED"
           echo "=================================="
 
       - name: No update
