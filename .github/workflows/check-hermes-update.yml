@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout Update Builder
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check Repo 2 latest commit
         id: check
@@ -84,25 +84,73 @@ jobs:
 
           echo "Repo 2 downloaded successfully."
 
-          echo "Files received from Repo 2:"
-          find downloaded-hermes -maxdepth 3 -type f | sort
+          find downloaded-hermes -maxdepth 4 -type f \
+            ! -path "*/.git/*" | sort
 
-      - name: Verify downloaded source
+      - name: Verify downloaded Android project
         if: steps.check.outputs.UPDATE_FOUND == 'true'
         run: |
-          echo "Checking downloaded source..."
+          echo "Checking Android project..."
 
-          if [ ! -d "downloaded-hermes" ]; then
-            echo "ERROR: Download folder does not exist."
+          test -f downloaded-hermes/settings.gradle.kts
+          test -f downloaded-hermes/build.gradle.kts
+          test -f downloaded-hermes/app/build.gradle.kts
+          test -f downloaded-hermes/app/src/main/AndroidManifest.xml
+          test -f downloaded-hermes/app/src/main/java/com/example/hermestest/MainActivity.java
+
+          echo "Android project verification PASSED."
+
+      - name: Setup JDK 17
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        uses: android-actions/setup-android@v4
+
+      - name: Setup Gradle 9.5
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.5'
+
+      - name: Build APK
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        working-directory: downloaded-hermes
+        run: |
+          echo "Starting Android APK build..."
+
+          gradle assembleDebug --no-daemon
+
+          echo "APK build completed."
+
+      - name: Verify APK
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        run: |
+          echo "Searching for APK..."
+
+          APK_PATH=$(find downloaded-hermes/app/build/outputs/apk \
+            -type f \
+            -name "*.apk" | head -n 1)
+
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: APK was not created."
             exit 1
           fi
 
-          if [ ! -f "downloaded-hermes/README.md" ]; then
-            echo "ERROR: README.md was not downloaded."
-            exit 1
-          fi
+          echo "APK FOUND:"
+          echo "$APK_PATH"
 
-          echo "Source verification PASSED."
+      - name: Upload APK
+        if: steps.check.outputs.UPDATE_FOUND == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-test-apk
+          path: downloaded-hermes/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
 
       - name: Update detected
         if: steps.check.outputs.UPDATE_FOUND == 'true'
@@ -110,7 +158,9 @@ jobs:
           echo "=================================="
           echo "NEW HERMES UPDATE DETECTED"
           echo "Repo 2 source downloaded"
-          echo "Source verification PASSED"
+          echo "Android project verified"
+          echo "APK BUILD SUCCESSFUL"
+          echo "APK uploaded as GitHub Artifact"
           echo "=================================="
 
       - name: No update
