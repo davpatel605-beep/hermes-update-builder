@@ -20,7 +20,7 @@ jobs:
       - name: Check Repo 2 latest commit
         id: check
         env:
-          REPO2: https://github.com/davpatel605-deep/hermes-android-test-source.git
+          REPO2: https://github.com/davpatel605-beep/hermes-android-test-source.git
         run: |
           echo "Checking Repo 2..."
 
